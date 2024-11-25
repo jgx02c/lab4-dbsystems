@@ -247,6 +247,104 @@ def display_all_buses():
     connection.close()
     return results
 
+def record_actual_trip_data(trip_number, date, scheduled_start_time):
+    connection = get_connection()
+    cursor = connection.cursor()
+    
+    try:
+        # First, verify the trip offering exists
+        cursor.execute('''
+            SELECT EXISTS (
+                SELECT 1 FROM TripOffering 
+                WHERE TripNumber = ? AND Date = ? AND ScheduledStartTime = ?
+            )
+        ''', (trip_number, date, scheduled_start_time))
+        
+        if not cursor.fetchone()[0]:
+            print("Error: Trip offering not found!")
+            return False
+        
+        # Get all stops for this trip
+        cursor.execute('''
+            SELECT s.StopNumber, s.StopAddress, tsi.SequenceNumber
+            FROM TripStopInfo tsi
+            JOIN Stop s ON tsi.StopNumber = s.StopNumber
+            WHERE tsi.TripNumber = ?
+            ORDER BY tsi.SequenceNumber
+        ''', (trip_number,))
+        
+        stops = cursor.fetchall()
+        
+        if not stops:
+            print("Error: No stops found for this trip!")
+            return False
+            
+        print("\nRecording actual data for each stop:")
+        print("(Times should be in HH:MM format)")
+        
+        for stop in stops:
+            print(f"\nStop {stop[0]}: {stop[1]} (Sequence: {stop[2]})")
+            
+            scheduled_arrival = input("Scheduled Arrival Time: ")
+            actual_start = input("Actual Start Time: ")
+            actual_arrival = input("Actual Arrival Time: ")
+            
+            while True:
+                try:
+                    passengers_in = int(input("Number of Passengers In: "))
+                    passengers_out = int(input("Number of Passengers Out: "))
+                    break
+                except ValueError:
+                    print("Please enter valid numbers for passengers.")
+            
+            # Insert the actual trip stop information
+            cursor.execute('''
+                INSERT INTO ActualTripStopInfo (
+                    TripNumber, Date, ScheduledStartTime, StopNumber,
+                    ScheduledArrivalTime, ActualStartTime, ActualArrivalTime,
+                    NumberOfPassengerIn, NumberOfPassengerOut
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                trip_number, date, scheduled_start_time, stop[0],
+                scheduled_arrival, actual_start, actual_arrival,
+                passengers_in, passengers_out
+            ))
+        
+        connection.commit()
+        return True
+        
+    except sqlite3.Error as e:
+        print(f"Database error: {e}")
+        connection.rollback()
+        return False
+    finally:
+        connection.close()
+
+def display_actual_trip_data(trip_number, date, scheduled_start_time):
+    connection = get_connection()
+    cursor = connection.cursor()
+    
+    try:
+        cursor.execute('''
+            SELECT 
+                a.StopNumber,
+                s.StopAddress,
+                a.ScheduledArrivalTime,
+                a.ActualStartTime,
+                a.ActualArrivalTime,
+                a.NumberOfPassengerIn,
+                a.NumberOfPassengerOut
+            FROM ActualTripStopInfo a
+            JOIN Stop s ON a.StopNumber = s.StopNumber
+            WHERE a.TripNumber = ? 
+            AND a.Date = ? 
+            AND a.ScheduledStartTime = ?
+            ORDER BY a.StopNumber
+        ''', (trip_number, date, scheduled_start_time))
+        
+        return cursor.fetchall()
+    finally:
+        connection.close()
 
 def display_trip_stops(trip_number):
     connection = get_connection()
@@ -330,6 +428,8 @@ def main_menu():
         print("10. Display All Buses")
         print("11. Display Trip Stops")
         print("12. Display Driver's Weekly Schedule")
+        print("13. Record Actual Trip Data")
+        print("14. View Actual Trip Data")
         print("0. Exit")
         
         choice = input("\nEnter your choice: ")
@@ -498,6 +598,57 @@ def main_menu():
                     print(f"{trip[0]:^6} | {trip[1]:<4} | {trip[2]:<2} | {trip[3]} | {trip[4]:^10} | {trip[5]:^11}")
             else:
                 print(f"No schedule found for {driver_name} in the specified week")
+
+     # Replace the problematic section in the main_menu() function with this corrected version:
+
+        elif choice == "13":
+            print("\n--- Record Actual Trip Data ---")
+            # Show available trips first
+            print("\nAvailable Trip Offerings:")
+            connection = get_connection()
+            cursor = connection.cursor()
+            cursor.execute('''
+                SELECT DISTINCT t.TripNumber, t.StartLocationName, t.DestinationName,
+                       tr.Date, tr.ScheduledStartTime
+                FROM Trip t
+                JOIN TripOffering tr ON t.TripNumber = tr.TripNumber
+            ''')
+            trips = cursor.fetchall()
+            print("Trip # | From | To | Date | Start Time")
+            print("-" * 50)
+            for trip in trips:
+                print(f"{trip[0]:^6} | {trip[1]:<4} | {trip[2]:<2} | {trip[3]} | {trip[4]}")
+            
+            try:
+                trip_number = int(input("\nEnter Trip Number: "))
+                date = input("Enter Date (YYYY-MM-DD): ")
+                scheduled_start = input("Enter Scheduled Start Time (HH:MM): ")
+                
+                if record_actual_trip_data(trip_number, date, scheduled_start):
+                    print("\nActual trip data recorded successfully!")
+                else:
+                    print("\nFailed to record actual trip data.")
+            except ValueError:
+                print("Invalid input. Trip Number must be a number.")
+            finally:
+                connection.close()
+
+        elif choice == "14":
+            print("\n--- View Actual Trip Data ---")
+            trip_number = int(input("Enter Trip Number: "))
+            date = input("Enter Date (YYYY-MM-DD): ")
+            scheduled_start = input("Enter Scheduled Start Time (HH:MM): ")
+            
+            actual_data = display_actual_trip_data(trip_number, date, scheduled_start)
+            
+            if actual_data:
+                print("\nActual Trip Data:")
+                print("Stop # | Stop Address | Scheduled | Actual Start | Actual Arrival | In | Out")
+                print("-" * 80)
+                for data in actual_data:
+                    print(f"{data[0]:^7} | {data[1]:<12} | {data[2]:^9} | {data[3]:^12} | {data[4]:^14} | {data[5]:^3} | {data[6]:^3}")
+            else:
+                print("No actual trip data found for this trip offering.")
 
         elif choice == "0":
             print("\nGoodbye!")
